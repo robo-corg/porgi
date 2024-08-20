@@ -19,11 +19,36 @@ const COMPLETED_TEXT_COLOR: Color = tailwind::GREEN.c500;
 
 use eyre::Result;
 use itertools::Itertools;
+use rayon::prelude::*;
 use serde::Deserialize;
 use std::{
+    collections::HashSet,
+    fs::DirEntry,
     io::{self, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
+use walkdir::WalkDir;
+
+#[derive(Debug, Deserialize)]
+struct Config {
+    ignore: HashSet<String>,
+    listing_command: Option<Vec<String>>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            listing_command: Some(vec![
+                "eza".to_string(),
+                "--tree".to_string(),
+                "--git-ignore".to_string(),
+            ]),
+            ignore: vec![".git".to_string(), "target".to_string()]
+                .into_iter()
+                .collect(),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct CargoMeta {
@@ -48,15 +73,81 @@ struct Project {
     path: PathBuf,
     git: bool,
     package: Vec<PackageMeta>,
+    readme: Option<String>,
+    modified: std::time::SystemTime,
+    dir_listing: String,
 }
 
 impl Project {
-    fn from_path(path: PathBuf) -> Result<Self> {
+    fn from_path(config: &Config, path: PathBuf) -> Result<Self> {
         let git = path.join(".git").exists();
         let package = Vec::new();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        Ok(Project { name, path, git, package })
+
+        let readme_path = path.join("README.md");
+        let readme = if readme_path.exists() {
+            Some(std::fs::read_to_string(readme_path)?)
+        } else {
+            None
+        };
+
+        let modified = get_modified_time(config, &path)?;
+
+        //let dir_listing = get_dir_listing(config, &path)?;
+
+        let dir_listing = String::new();
+
+        Ok(Project {
+            name,
+            path,
+            git,
+            package,
+            readme,
+            modified,
+            dir_listing,
+        })
     }
+}
+
+fn get_modified_time(config: &Config, path: &Path) -> Result<std::time::SystemTime> {
+    let mut modified = {
+        let metadata = std::fs::metadata(path)?;
+        metadata.modified()?
+    };
+
+    WalkDir::new(path)
+        .into_iter()
+        .filter_entry(|entry| {
+            !config
+                .ignore
+                .contains(entry.file_name().to_string_lossy().as_ref())
+        })
+        .filter_map(Result::ok)
+        .filter_map(|path| path.metadata().ok())
+        .map(|metadata| metadata.modified().ok())
+        .filter_map(|modified_time| modified_time)
+        .for_each(|modified_time| {
+            if modified_time > modified {
+                modified = modified_time;
+            }
+        });
+
+    Ok(modified)
+}
+
+fn get_dir_listing(config: &Config, path: &Path) -> Result<String> {
+    let mut listing = String::new();
+
+    if let Some(cmd) = &config.listing_command {
+        let output = std::process::Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .current_dir(path)
+            .output()?;
+
+        listing = String::from_utf8(output.stdout)?;
+    }
+
+    Ok(listing)
 }
 
 struct StatefulList {
@@ -77,26 +168,30 @@ struct App {
 }
 
 fn main() -> Result<()> {
+    let config = Config::default();
+
     // setup terminal
     init_error_hooks()?;
     let terminal = init_terminal()?;
 
     let projects_dir = PathBuf::from(shellexpand::tilde("~/projects").into_owned());
 
-    let projects_iter = projects_dir
+    let project_dir_ents: Vec<DirEntry> = projects_dir
         .read_dir()
         .unwrap()
-        .filter_map_ok(|entry| {
-            let path = entry.path();
-            if path.is_dir() {
-                Some(Project::from_path(path))
-            } else {
-                None
-            }
-        })
-        .flatten();
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let projects = projects_iter.collect::<Result<Vec<_>>>()?;
+    let projects_iter = project_dir_ents
+        .par_iter()
+        .map(|entry| entry.path())
+        .filter(|p| p.is_dir())
+        .map(|path| Project::from_path(&config, path));
+
+    let mut projects = projects_iter.collect::<Result<Vec<_>>>()?;
+
+    projects.sort_by(|a, b| a.name.cmp(&b.name));
+
+    projects.sort_by(|a, b| b.modified.cmp(&a.modified));
 
     // create app and run it
     App::new(projects).run(terminal)?;
@@ -186,19 +281,14 @@ impl App {
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let horizontal = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ]);
+        let horizontal =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]);
 
         let [left, right] = horizontal.areas(area);
 
         // Create two chunks with equal vertical screen space. One for the list and the other for
         // the info block.
-        let vertical = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(1),
-        ]);
+        let vertical = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
         let [upper_item_list_area, input_area] = vertical.areas(left);
 
         self.render_projects(upper_item_list_area, buf);
@@ -258,12 +348,8 @@ impl App {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, project)| {
-                fuzzy_match(&self.search, &project.path.display().to_string())
-            })
-            .map(|(i, project)|
-                ListItem::new(project.name.as_str())
-            )
+            .filter(|(_, project)| fuzzy_match(&self.search, &project.path.display().to_string()))
+            .map(|(i, project)| ListItem::new(project.name.as_str()))
             .collect();
 
         // Create a List from all list items and highlight the currently selected one
@@ -286,7 +372,12 @@ impl App {
 
     fn render_info(&self, project: &Project, area: Rect, buf: &mut Buffer) {
         // We get the info depending on the item's state.
-        let info = format!("{:?}", project);
+        let info = format!(
+            "{}\n{}\n{}",
+            project.name,
+            project.readme.as_deref().unwrap_or(""),
+            project.dir_listing
+        );
 
         // We show the list item's info under the list in this paragraph
         let outer_info_block = Block::new()
