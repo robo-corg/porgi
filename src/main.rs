@@ -18,7 +18,6 @@ const TEXT_COLOR: Color = tailwind::SLATE.c200;
 const COMPLETED_TEXT_COLOR: Color = tailwind::GREEN.c500;
 
 use eyre::Result;
-use itertools::Itertools;
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::{
@@ -349,7 +348,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, project)| fuzzy_match(&self.search, &project.path.display().to_string()))
-            .map(|(i, project)| ListItem::new(project.name.as_str()))
+            .map(|(_, project)| ListItem::new(project.name.as_str()))
             .collect();
 
         // Create a List from all list items and highlight the currently selected one
