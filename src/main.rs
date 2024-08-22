@@ -2,6 +2,9 @@
 //!
 //! Collects status for projects and their git status as well other metadata
 
+mod config;
+mod project;
+
 use color_eyre::config::HookBuilder;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -12,142 +15,16 @@ use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
 
 const TODO_HEADER_BG: Color = tailwind::BLUE.c950;
 const NORMAL_ROW_COLOR: Color = tailwind::SLATE.c950;
-const ALT_ROW_COLOR: Color = tailwind::SLATE.c900;
 const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
 const TEXT_COLOR: Color = tailwind::SLATE.c200;
-const COMPLETED_TEXT_COLOR: Color = tailwind::GREEN.c500;
 
 use eyre::Result;
-use rayon::prelude::*;
-use serde::Deserialize;
-use std::{
-    collections::HashSet,
-    fs::DirEntry,
-    io::{self, stdout},
-    path::{Path, PathBuf},
+use std::io::{self, stdout};
+
+use crate::{
+    config::Config,
+    project::{read_projects, Project},
 };
-use walkdir::WalkDir;
-
-#[derive(Debug, Deserialize)]
-struct Config {
-    ignore: HashSet<String>,
-    listing_command: Option<Vec<String>>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            listing_command: Some(vec![
-                "eza".to_string(),
-                "--tree".to_string(),
-                "--git-ignore".to_string(),
-            ]),
-            ignore: vec![".git".to_string(), "target".to_string()]
-                .into_iter()
-                .collect(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoMeta {
-    name: String,
-    version: String,
-    authors: Vec<String>,
-    description: Option<String>,
-    license: Option<String>,
-    repository: Option<String>,
-    dependencies: Vec<String>,
-    dev_dependencies: Vec<String>,
-}
-
-#[derive(Debug)]
-enum PackageMeta {
-    Cargo(CargoMeta),
-}
-
-#[derive(Debug)]
-struct Project {
-    name: String,
-    path: PathBuf,
-    git: bool,
-    package: Vec<PackageMeta>,
-    readme: Option<String>,
-    modified: std::time::SystemTime,
-    dir_listing: String,
-}
-
-impl Project {
-    fn from_path(config: &Config, path: PathBuf) -> Result<Self> {
-        let git = path.join(".git").exists();
-        let package = Vec::new();
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-
-        let readme_path = path.join("README.md");
-        let readme = if readme_path.exists() {
-            Some(std::fs::read_to_string(readme_path)?)
-        } else {
-            None
-        };
-
-        let modified = get_modified_time(config, &path)?;
-
-        //let dir_listing = get_dir_listing(config, &path)?;
-
-        let dir_listing = String::new();
-
-        Ok(Project {
-            name,
-            path,
-            git,
-            package,
-            readme,
-            modified,
-            dir_listing,
-        })
-    }
-}
-
-fn get_modified_time(config: &Config, path: &Path) -> Result<std::time::SystemTime> {
-    let mut modified = {
-        let metadata = std::fs::metadata(path)?;
-        metadata.modified()?
-    };
-
-    WalkDir::new(path)
-        .into_iter()
-        .filter_entry(|entry| {
-            !config
-                .ignore
-                .contains(entry.file_name().to_string_lossy().as_ref())
-        })
-        .filter_map(Result::ok)
-        .filter_map(|path| path.metadata().ok())
-        .map(|metadata| metadata.modified().ok())
-        .filter_map(|modified_time| modified_time)
-        .for_each(|modified_time| {
-            if modified_time > modified {
-                modified = modified_time;
-            }
-        });
-
-    Ok(modified)
-}
-
-fn get_dir_listing(config: &Config, path: &Path) -> Result<String> {
-    let mut listing = String::new();
-
-    if let Some(cmd) = &config.listing_command {
-        let output = std::process::Command::new(&cmd[0])
-            .args(&cmd[1..])
-            .current_dir(path)
-            .output()?;
-
-        listing = String::from_utf8(output.stdout)?;
-    }
-
-    Ok(listing)
-}
 
 struct StatefulList {
     state: ListState,
@@ -167,30 +44,16 @@ struct App {
 }
 
 fn main() -> Result<()> {
-    let config = Config::default();
+    let config = Config::load()?;
+
+    let mut projects = read_projects(&config)?;
+
+    projects.sort_by(|a, b| a.name.cmp(&b.name));
+    projects.sort_by(|a, b| b.modified.cmp(&a.modified));
 
     // setup terminal
     init_error_hooks()?;
     let terminal = init_terminal()?;
-
-    let projects_dir = PathBuf::from(shellexpand::tilde("~/projects").into_owned());
-
-    let project_dir_ents: Vec<DirEntry> = projects_dir
-        .read_dir()
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let projects_iter = project_dir_ents
-        .par_iter()
-        .map(|entry| entry.path())
-        .filter(|p| p.is_dir())
-        .map(|path| Project::from_path(&config, path));
-
-    let mut projects = projects_iter.collect::<Result<Vec<_>>>()?;
-
-    projects.sort_by(|a, b| a.name.cmp(&b.name));
-
-    projects.sort_by(|a, b| b.modified.cmp(&a.modified));
 
     // create app and run it
     App::new(projects).run(terminal)?;
@@ -372,10 +235,9 @@ impl App {
     fn render_info(&self, project: &Project, area: Rect, buf: &mut Buffer) {
         // We get the info depending on the item's state.
         let info = format!(
-            "{}\n{}\n{}",
+            "{}\n{}",
             project.name,
             project.readme.as_deref().unwrap_or(""),
-            project.dir_listing
         );
 
         // We show the list item's info under the list in this paragraph
