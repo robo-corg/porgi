@@ -6,25 +6,16 @@ use crossterm::{
 };
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
 
-//const config.colors.project_header_bg: Color = tailwind::BLUE.c950;
-// const config.colors.normal_row_color: Color = tailwind::SLATE.c950;
-// const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
-// const TEXT_COLOR: Color = tailwind::SLATE.c200;
-
 const INFO_TEXT: &str =
     "(Esc) quit | (↑) move up | (↓) move down | (o) open project | (←) unselect";
 
-use eyre::Result;
 use serde::Deserialize;
 use std::{
     io::{self, stdout},
     sync::Arc,
 };
 
-use crate::{
-    config::Config,
-    project::{read_projects, Project},
-};
+use crate::{config::Config, project::Project};
 
 #[derive(Debug, Deserialize)]
 pub struct ColorConfig {
@@ -94,7 +85,6 @@ pub(crate) fn restore_terminal() -> color_eyre::Result<()> {
     Ok(())
 }
 
-
 impl App {
     pub(crate) fn new(config: Arc<Config>, projects: Vec<Project>) -> Self {
         Self {
@@ -159,23 +149,6 @@ impl Widget for &mut App {
         self.render_body(rects[0], buf);
         self.render_footer(rects[1], buf);
     }
-}
-
-fn fuzzy_match(search: &str, item: &str) -> bool {
-    let search_chars = search.chars();
-    let mut item_chars = item.chars();
-
-    'outer: for s_ch in search_chars {
-        while let Some(i_ch) = item_chars.next() {
-            if s_ch == i_ch {
-                continue 'outer;
-            }
-        }
-
-        return false;
-    }
-
-    true
 }
 
 impl App {
@@ -245,9 +218,7 @@ impl App {
             .items
             .items
             .iter()
-            .enumerate()
-            .filter(|(_, project)| fuzzy_match(&self.search, &project.path.display().to_string()))
-            .map(|(_, project)| ListItem::new(project.name.as_str()))
+            .map(|project| ListItem::new(project.name.as_str()))
             .collect();
 
         // Create a List from all list items and highlight the currently selected one

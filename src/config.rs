@@ -12,7 +12,7 @@ pub struct Config {
     #[serde(default)]
     pub colors: ColorConfig,
     #[serde(default)]
-    pub opener: ProjectOpener
+    pub opener: ProjectOpener,
 }
 
 impl Config {

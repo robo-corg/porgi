@@ -6,20 +6,13 @@ mod config;
 mod project;
 mod tui;
 
-use color_eyre::config::HookBuilder;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
-};
-use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
-
 use eyre::Result;
-use std::{io::{self, stdout}, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     config::Config,
-    project::{read_projects, Project}, tui::{init_error_hooks, init_terminal, restore_terminal, App},
+    project::read_projects,
+    tui::{init_error_hooks, init_terminal, restore_terminal, App},
 };
 
 fn main() -> Result<()> {

@@ -1,16 +1,16 @@
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 
-use eyre::{anyhow, Context};
 use eyre::Result;
+use eyre::{anyhow, Context};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Deserialize;
 
-use crate::config::{Config};
+use crate::config::Config;
 
 #[derive(Debug, Deserialize)]
-struct CargoMeta {
+pub(crate) struct CargoMeta {
     name: String,
     version: String,
     authors: Vec<String>,
@@ -62,7 +62,7 @@ impl Project {
     }
 }
 
-fn get_modified_time(config: &Config, path: &Path) -> Result<std::time::SystemTime> {
+fn get_modified_time(_config: &Config, path: &Path) -> Result<std::time::SystemTime> {
     let mut modified = {
         let metadata = std::fs::metadata(path)?;
         metadata.modified()?
@@ -73,8 +73,7 @@ fn get_modified_time(config: &Config, path: &Path) -> Result<std::time::SystemTi
         .build()
         .filter_map(Result::ok)
         .filter_map(|path| path.metadata().ok())
-        .map(|metadata| metadata.modified().ok())
-        .filter_map(|modified_time| modified_time)
+        .filter_map(|metadata| metadata.modified().ok())
         .for_each(|modified_time| {
             if modified_time > modified {
                 modified = modified_time;
@@ -98,7 +97,7 @@ pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
         .par_iter()
         .map(|entry| entry.path())
         .filter(|p| p.is_dir())
-        .map(|path| Project::from_path(&config, path));
+        .map(|path| Project::from_path(config, path));
 
     let projects = projects_iter.collect::<Result<Vec<_>>>()?;
 
@@ -134,7 +133,9 @@ impl ProjectOpener {
     }
 
     pub(crate) fn open_code(project: &Project) -> Result<()> {
-        let mut child = std::process::Command::new("code").arg(&project.path).spawn()?;
+        let mut child = std::process::Command::new("code")
+            .arg(&project.path)
+            .spawn()?;
 
         child.wait()?;
 
@@ -142,9 +143,12 @@ impl ProjectOpener {
     }
 
     pub(crate) fn open_editor(project: &Project) -> Result<()> {
-        let editor = std::env::var("EDITOR").wrap_err("Could not read EDITOR environment variable")?;
+        let editor =
+            std::env::var("EDITOR").wrap_err("Could not read EDITOR environment variable")?;
 
-        let mut child = std::process::Command::new(&editor).arg(&project.path).spawn()?;
+        let mut child = std::process::Command::new(&editor)
+            .arg(&project.path)
+            .spawn()?;
 
         child.wait()?;
 
@@ -162,5 +166,3 @@ impl ProjectOpener {
         Ok(())
     }
 }
-
-
