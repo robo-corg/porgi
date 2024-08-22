@@ -1,0 +1,357 @@
+use color_eyre::config::HookBuilder;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
+
+//const config.colors.project_header_bg: Color = tailwind::BLUE.c950;
+// const config.colors.normal_row_color: Color = tailwind::SLATE.c950;
+// const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
+// const TEXT_COLOR: Color = tailwind::SLATE.c200;
+
+const INFO_TEXT: &str =
+    "(Esc) quit | (↑) move up | (↓) move down | (o) open project | (←) unselect";
+
+use eyre::Result;
+use serde::Deserialize;
+use std::{
+    io::{self, stdout},
+    sync::Arc,
+};
+
+use crate::{
+    config::Config,
+    project::{read_projects, Project},
+};
+
+#[derive(Debug, Deserialize)]
+pub struct ColorConfig {
+    normal_row_color: Color,
+    selected_style_fg: Color,
+    text_color: Color,
+    project_header_bg: Color,
+    footer_border_color: Color,
+}
+
+impl Default for ColorConfig {
+    fn default() -> Self {
+        Self {
+            normal_row_color: tailwind::SLATE.c950,
+            selected_style_fg: tailwind::BLUE.c300,
+            text_color: tailwind::SLATE.c200,
+            project_header_bg: tailwind::BLUE.c950,
+            footer_border_color: tailwind::BLUE.c300,
+        }
+    }
+}
+
+struct StatefulList {
+    state: ListState,
+    items: Vec<Project>,
+    last_selected: Option<usize>,
+}
+
+/// This struct holds the current state of the app. In particular, it has the `items` field which is
+/// a wrapper around `ListState`. Keeping track of the items state let us render the associated
+/// widget with its state and have access to features such as natural scrolling.
+///
+/// Check the event handling at the bottom to see how to change the state on incoming events.
+/// Check the drawing logic for items on how to specify the highlighting style for selected items.
+pub(crate) struct App {
+    config: Arc<Config>,
+    search: String,
+    items: StatefulList,
+}
+
+pub(crate) fn init_error_hooks() -> color_eyre::Result<()> {
+    let (panic, error) = HookBuilder::default().into_hooks();
+    let panic = panic.into_panic_hook();
+    let error = error.into_eyre_hook();
+    color_eyre::eyre::set_hook(Box::new(move |e| {
+        let _ = restore_terminal();
+        error(e)
+    }))?;
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = restore_terminal();
+        panic(info);
+    }));
+    Ok(())
+}
+
+pub(crate) fn init_terminal() -> color_eyre::Result<Terminal<impl Backend>> {
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+pub(crate) fn restore_terminal() -> color_eyre::Result<()> {
+    disable_raw_mode()?;
+    stdout().execute(LeaveAlternateScreen)?;
+    Ok(())
+}
+
+
+impl App {
+    pub(crate) fn new(config: Arc<Config>, projects: Vec<Project>) -> Self {
+        Self {
+            config,
+            search: String::new(),
+            items: StatefulList::with_projects(projects),
+        }
+    }
+
+    fn go_top(&mut self) {
+        self.items.state.select(Some(0));
+    }
+
+    fn go_bottom(&mut self) {
+        self.items.state.select(Some(self.items.items.len() - 1));
+    }
+
+    fn open_project(&mut self) {
+        if let Some(project) = self.items.current() {
+            self.config.opener.open(project).unwrap();
+        }
+    }
+}
+
+impl App {
+    pub(crate) fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+        loop {
+            self.draw(&mut terminal)?;
+
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    use KeyCode::*;
+                    match key.code {
+                        Esc => return Ok(()),
+                        Left => self.items.unselect(),
+                        Down => self.items.next(),
+                        Up => self.items.previous(),
+                        KeyCode::Char('o') => self.open_project(),
+                        // KeyCode::Char(ch) => {
+                        //     self.search.push(ch);
+                        // }
+                        // Backspace => {
+                        //     self.search.pop();
+                        // }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> io::Result<()> {
+        terminal.draw(|f| f.render_widget(self, f.size()))?;
+        Ok(())
+    }
+}
+
+impl Widget for &mut App {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let rects = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]).split(area);
+
+        self.render_body(rects[0], buf);
+        self.render_footer(rects[1], buf);
+    }
+}
+
+fn fuzzy_match(search: &str, item: &str) -> bool {
+    let search_chars = search.chars();
+    let mut item_chars = item.chars();
+
+    'outer: for s_ch in search_chars {
+        while let Some(i_ch) = item_chars.next() {
+            if s_ch == i_ch {
+                continue 'outer;
+            }
+        }
+
+        return false;
+    }
+
+    true
+}
+
+impl App {
+    fn render_body(&mut self, area: Rect, buf: &mut Buffer) {
+        // Create a layout with 2 columns
+        let horizontal =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]);
+
+        let [left, right] = horizontal.areas(area);
+
+        // Create two chunks with equal vertical screen space. One for the list and the other for
+        // the info block.
+        let vertical = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
+        let [upper_item_list_area, input_area] = vertical.areas(left);
+
+        self.render_projects(upper_item_list_area, buf);
+
+        if let Some(i) = self.items.state.selected() {
+            let project = &self.items.items[i];
+            self.render_info(project, right, buf);
+        }
+
+        Paragraph::new(self.search.as_str())
+            .style(Style::default().fg(Color::Yellow))
+            .render(input_area, buf);
+    }
+
+    fn render_footer(&mut self, area: Rect, buf: &mut Buffer) {
+        let info_footer = Paragraph::new(Line::from(INFO_TEXT))
+            .style(
+                Style::new()
+                    .fg(self.config.colors.text_color)
+                    .bg(self.config.colors.normal_row_color),
+            )
+            .centered()
+            .block(
+                Block::bordered()
+                    .border_type(BorderType::Double)
+                    .border_style(Style::new().fg(self.config.colors.footer_border_color)),
+            );
+        info_footer.render(area, buf);
+        //f.render_widget(info_footer, area);
+    }
+
+    fn render_projects(&mut self, area: Rect, buf: &mut Buffer) {
+        // We create two blocks, one is for the header (outer) and the other is for list (inner).
+        let outer_block = Block::new()
+            .borders(Borders::NONE)
+            .title_alignment(Alignment::Center)
+            .title("Projects")
+            .fg(self.config.colors.text_color)
+            .bg(self.config.colors.project_header_bg);
+        let inner_block = Block::new()
+            .borders(Borders::NONE)
+            .fg(self.config.colors.text_color)
+            .bg(self.config.colors.normal_row_color);
+
+        // We get the inner area from outer_block. We'll use this area later to render the table.
+        let outer_area = area;
+        let inner_area = outer_block.inner(outer_area);
+
+        // We can render the header in outer_area.
+        outer_block.render(outer_area, buf);
+
+        // Iterate through all elements in the `items` and stylize them.
+        let items: Vec<ListItem> = self
+            .items
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| fuzzy_match(&self.search, &project.path.display().to_string()))
+            .map(|(_, project)| ListItem::new(project.name.as_str()))
+            .collect();
+
+        // Create a List from all list items and highlight the currently selected one
+        let items = List::new(items)
+            .block(inner_block)
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED)
+                    .fg(self.config.colors.selected_style_fg),
+            )
+            .highlight_symbol(">")
+            .highlight_spacing(HighlightSpacing::Always);
+
+        // We can now render the item list
+        // (look careful we are using StatefulWidget's render.)
+        // ratatui::widgets::StatefulWidget::render as stateful_render
+        StatefulWidget::render(items, inner_area, buf, &mut self.items.state);
+    }
+
+    fn render_info(&self, project: &Project, area: Rect, buf: &mut Buffer) {
+        // We get the info depending on the item's state.
+        let info = format!(
+            "{}\n{}",
+            project.name,
+            project.readme.as_deref().unwrap_or(""),
+        );
+
+        // We show the list item's info under the list in this paragraph
+        let outer_info_block = Block::new()
+            .borders(Borders::NONE)
+            .title_alignment(Alignment::Center)
+            .title(project.name.as_str())
+            .fg(self.config.colors.text_color)
+            .bg(self.config.colors.project_header_bg);
+
+        let inner_info_block = Block::new()
+            .borders(Borders::NONE)
+            .padding(Padding::horizontal(1))
+            .bg(self.config.colors.normal_row_color);
+
+        // This is a similar process to what we did for list. outer_info_area will be used for
+        // header inner_info_area will be used for the list info.
+        let outer_info_area = area;
+        let inner_info_area = outer_info_block.inner(outer_info_area);
+
+        // We can render the header. Inner info will be rendered later
+        outer_info_block.render(outer_info_area, buf);
+
+        let info_paragraph = Paragraph::new(info)
+            .block(inner_info_block)
+            .fg(self.config.colors.text_color)
+            .wrap(Wrap { trim: false });
+
+        // We can now render the item info
+        info_paragraph.render(inner_info_area, buf);
+    }
+}
+
+impl StatefulList {
+    fn with_projects(projects: Vec<Project>) -> Self {
+        StatefulList {
+            state: ListState::default(),
+            items: projects,
+            last_selected: None,
+        }
+    }
+
+    fn next(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => self.last_selected.unwrap_or(0),
+        };
+        self.state.select(Some(i));
+    }
+
+    fn previous(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => self.last_selected.unwrap_or(0),
+        };
+        self.state.select(Some(i));
+    }
+
+    fn unselect(&mut self) {
+        let offset = self.state.offset();
+        self.last_selected = self.state.selected();
+        self.state.select(None);
+        *self.state.offset_mut() = offset;
+    }
+
+    fn current(&self) -> Option<&Project> {
+        self.state.selected().map(|i| &self.items[i])
+    }
+}

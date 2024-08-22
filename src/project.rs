@@ -1,12 +1,13 @@
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 
+use eyre::{anyhow, Context};
 use eyre::Result;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Deserialize;
 
-use crate::config::Config;
+use crate::config::{Config};
 
 #[derive(Debug, Deserialize)]
 struct CargoMeta {
@@ -103,3 +104,63 @@ pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
 
     Ok(projects)
 }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectOpener {
+    #[default]
+    Auto,
+    Code,
+    Editor,
+    Command(Vec<String>),
+}
+
+impl ProjectOpener {
+    pub(crate) fn open(&self, project: &Project) -> Result<()> {
+        match self {
+            ProjectOpener::Auto => {
+                if std::env::var("CODE").is_ok() {
+                    Self::open_code(project)
+                } else if std::env::var("EDITOR").is_ok() {
+                    Self::open_editor(project)
+                } else {
+                    Err(anyhow!("vscode not found nor was an editor set"))
+                }
+            }
+            ProjectOpener::Code => Self::open_code(project),
+            ProjectOpener::Editor => Self::open_editor(project),
+            ProjectOpener::Command(cmd) => Self::open_command(project, cmd),
+        }
+    }
+
+    pub(crate) fn open_code(project: &Project) -> Result<()> {
+        let mut child = std::process::Command::new("code").arg(&project.path).spawn()?;
+
+        child.wait()?;
+
+        Ok(())
+    }
+
+    pub(crate) fn open_editor(project: &Project) -> Result<()> {
+        let editor = std::env::var("EDITOR").wrap_err("Could not read EDITOR environment variable")?;
+
+        let mut child = std::process::Command::new(&editor).arg(&project.path).spawn()?;
+
+        child.wait()?;
+
+        Ok(())
+    }
+
+    pub(crate) fn open_command(project: &Project, cmd: &[String]) -> Result<()> {
+        let mut child = std::process::Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .arg(&project.path)
+            .spawn()?;
+
+        child.wait()?;
+
+        Ok(())
+    }
+}
+
+

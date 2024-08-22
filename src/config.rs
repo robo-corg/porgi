@@ -2,9 +2,17 @@ use eyre::anyhow;
 use eyre::Result;
 use serde::Deserialize;
 
+use crate::project::ProjectOpener;
+use crate::tui::ColorConfig;
+
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub project_dirs: Vec<String>,
+    #[serde(default)]
+    pub colors: ColorConfig,
+    #[serde(default)]
+    pub opener: ProjectOpener
 }
 
 impl Config {
