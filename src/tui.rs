@@ -161,19 +161,21 @@ impl App {
 
         // Create two chunks with equal vertical screen space. One for the list and the other for
         // the info block.
-        let vertical = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
-        let [upper_item_list_area, input_area] = vertical.areas(left);
+        //let vertical = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
 
-        self.render_projects(upper_item_list_area, buf);
+        //let [upper_item_list_area, input_area] = vertical.areas(left);
+
+        self.render_projects(left, buf);
 
         if let Some(i) = self.items.state.selected() {
             let project = &self.items.items[i];
             self.render_info(project, right, buf);
         }
 
-        Paragraph::new(self.search.as_str())
-            .style(Style::default().fg(Color::Yellow))
-            .render(input_area, buf);
+        // TODO: Add this back when search is done properly
+        // Paragraph::new(self.search.as_str())
+        //     .style(Style::default().fg(Color::Yellow))
+        //     .render(input_area, buf);
     }
 
     fn render_footer(&mut self, area: Rect, buf: &mut Buffer) {
