@@ -43,8 +43,9 @@ impl Default for ColorConfig {
     }
 }
 
-struct StatefulList {
-    state: ListState,
+#[derive(Default)]
+struct StatefulTable {
+    state: TableState,
     items: ProjectStore,
     last_selected: Option<usize>,
 }
@@ -57,7 +58,7 @@ struct StatefulList {
 /// Check the drawing logic for items on how to specify the highlighting style for selected items.
 pub(crate) struct App {
     config: Arc<Config>,
-    items: StatefulList,
+    items: StatefulTable,
     project_events: ProjectLoader,
 }
 
@@ -94,7 +95,7 @@ impl App {
     pub(crate) fn new(config: Arc<Config>, project_events: ProjectLoader) -> Self {
         Self {
             config,
-            items: StatefulList::new(),
+            items: StatefulTable::new(),
             project_events,
         }
     }
@@ -253,7 +254,7 @@ impl App {
             .fg(self.config.colors.text_color)
             .bg(self.config.colors.project_header_bg);
         let inner_block = Block::new()
-            .borders(Borders::NONE)
+            .borders(Borders::RIGHT)
             .fg(self.config.colors.text_color)
             .bg(self.config.colors.normal_row_color);
 
@@ -265,29 +266,61 @@ impl App {
         outer_block.render(outer_area, buf);
 
         // Iterate through all elements in the `items` and stylize them.
-        let items: Vec<ListItem> = self
-            .items
-            .items
-            .iter()
-            .map(|project| ListItem::new(project.name.as_str()))
-            .collect();
+        // let items: Vec<ListItem> = self
+        //     .items
+        //     .items
+        //     .iter()
+        //     .map(|project| {
+        //         let text = Line::from(vec![
+        //             Span::raw(project.name.as_str()),
+        //             Span::raw(format!(" files: {}", project.file_count)),
+        //         ]);
+        //         ListItem::new(text)
+        //     })
+        //     .collect();
 
         // Create a List from all list items and highlight the currently selected one
-        let items = List::new(items)
-            .block(inner_block)
-            .highlight_style(
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::REVERSED)
-                    .fg(self.config.colors.selected_style_fg),
-            )
-            .highlight_symbol(">")
-            .highlight_spacing(HighlightSpacing::Always);
+        // let items = List::new(items)
+        //     .block(inner_block)
+        //     .highlight_style(
+        //         Style::default()
+        //             .add_modifier(Modifier::BOLD)
+        //             .add_modifier(Modifier::REVERSED)
+        //             .fg(self.config.colors.selected_style_fg),
+        //     )
+        //     .highlight_symbol(">")
+        //     .highlight_spacing(HighlightSpacing::Always);
+
+        let rows = [Row::new(vec!["Cell1", "Cell2", "Cell3"])];
+        // Columns widths are constrained in the same way as Layout...
+        let widths = [
+            Constraint::Length(5),
+            Constraint::Length(10),
+        ];
+
+        let table = Table::new(rows, widths)
+        // ...and they can be separated by a fixed spacing.
+        .column_spacing(1)
+        // You can set the style of the entire Table.
+        .style(Style::new().blue())
+        // It has an optional header, which is simply a Row always visible at the top.
+        // It has an optional footer, which is simply a Row always visible at the bottom.
+        .footer(Row::new(vec!["Updated on Dec 28"]))
+        .block(inner_block)
+        // The selected row and its content can also be styled.
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::REVERSED)
+                .fg(self.config.colors.selected_style_fg),
+        )
+        // ...and potentially show a symbol in front of the selection.
+        .highlight_symbol(">>");
 
         // We can now render the item list
         // (look careful we are using StatefulWidget's render.)
         // ratatui::widgets::StatefulWidget::render as stateful_render
-        StatefulWidget::render(items, inner_area, buf, &mut self.items.state);
+        StatefulWidget::render(table, inner_area, buf, &mut self.items.state);
     }
 
     fn render_info(&self, project: &Project, area: Rect, buf: &mut Buffer) {
@@ -329,10 +362,10 @@ impl App {
     }
 }
 
-impl StatefulList {
+impl StatefulTable {
     fn new() -> Self {
-        StatefulList {
-            state: ListState::default(),
+        Self {
+            state: TableState::default(),
             items: ProjectStore::default(),
             last_selected: None,
         }
