@@ -26,6 +26,13 @@ pub(crate) enum PackageMeta {
     Cargo(CargoMeta),
 }
 
+// pub(crate) struct ProjectDirInfo {
+//     pub(crate) parent: Option<usize>,
+//     pub(crate) modified: std::time::SystemTime,
+//     pub(crate) immediate_child_count: usize,
+//     pub(crate) total_child_count: usize,
+// }
+
 #[derive(Debug)]
 pub(crate) struct Project {
     pub(crate) name: String,
@@ -34,6 +41,7 @@ pub(crate) struct Project {
     pub(crate) package: Vec<PackageMeta>,
     pub(crate) readme: Option<String>,
     pub(crate) modified: std::time::SystemTime,
+    pub(crate) file_count: usize,
 }
 
 impl Project {
@@ -49,7 +57,7 @@ impl Project {
             None
         };
 
-        let modified = get_modified_time(config, &path)?;
+        let (modified, file_count) = get_file_summary(config, &path)?;
 
         Ok(Project {
             name,
@@ -58,15 +66,18 @@ impl Project {
             package,
             readme,
             modified,
+            file_count
         })
     }
 }
 
-fn get_modified_time(_config: &Config, path: &Path) -> Result<std::time::SystemTime> {
+fn get_file_summary(_config: &Config, path: &Path) -> Result<(std::time::SystemTime, usize)> {
     let mut modified = {
         let metadata = std::fs::metadata(path)?;
         metadata.modified()?
     };
+
+    let mut file_count = 0;
 
     WalkBuilder::new(path)
         .standard_filters(true)
@@ -75,12 +86,13 @@ fn get_modified_time(_config: &Config, path: &Path) -> Result<std::time::SystemT
         .filter_map(|path| path.metadata().ok())
         .filter_map(|metadata| metadata.modified().ok())
         .for_each(|modified_time| {
+            file_count += 1;
             if modified_time > modified {
                 modified = modified_time;
             }
         });
 
-    Ok(modified)
+    Ok((modified, file_count))
 }
 
 pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
