@@ -1,4 +1,5 @@
 use color_eyre::config::HookBuilder;
+use eyre::{bail, Result};
 use crossterm::{
     event::{self, Event, EventStream, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -16,7 +17,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{config::Config, project::Project};
+use crate::{config::Config, project::{Project, ProjectEvent, ProjectLoader}};
 
 #[derive(Debug, Deserialize)]
 pub struct ColorConfig {
@@ -55,6 +56,7 @@ pub(crate) struct App {
     config: Arc<Config>,
     search: String,
     items: StatefulList,
+    project_events: ProjectLoader,
 }
 
 pub(crate) fn init_error_hooks() -> color_eyre::Result<()> {
@@ -87,11 +89,12 @@ pub(crate) fn restore_terminal() -> color_eyre::Result<()> {
 }
 
 impl App {
-    pub(crate) fn new(config: Arc<Config>, projects: Vec<Project>) -> Self {
+    pub(crate) fn new(config: Arc<Config>, project_events: ProjectLoader) -> Self {
         Self {
             config,
             search: String::new(),
-            items: StatefulList::with_projects(projects),
+            items: StatefulList::new(),
+            project_events
         }
     }
 
@@ -111,15 +114,36 @@ impl App {
 }
 
 impl App {
-    pub(crate) async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+    pub(crate) async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> Result<()> {
         let mut reader = EventStream::new();
 
         loop {
             self.draw(&mut terminal)?;
 
             let mut event = reader.next().fuse();
+            let mut project_event_fut = self.project_events.next().fuse();
 
             select! {
+                project_event = project_event_fut => {
+                    match project_event {
+                        Some(Ok(event)) => {
+                            match event {
+                                ProjectEvent::Add(project) => {
+                                    self.items.items.push(project);
+                                }
+                                ProjectEvent::Update(project_key, last_modified) => {
+                                    if let Some(project) = self.items.items.iter_mut().find(|p| p.key() == &project_key) {
+                                        project.modified = last_modified;
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(e)) => {
+                            bail!(e);
+                        }
+                        None => break,
+                    }
+                },
                 maybe_event = event => {
                     match maybe_event {
                         Some(Ok(Event::Key(key))) => {
@@ -299,10 +323,10 @@ impl App {
 }
 
 impl StatefulList {
-    fn with_projects(projects: Vec<Project>) -> Self {
+    fn new() -> Self {
         StatefulList {
             state: ListState::default(),
-            items: projects,
+            items: Vec::new(),
             last_selected: None,
         }
     }

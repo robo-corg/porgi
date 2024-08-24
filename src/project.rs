@@ -82,6 +82,10 @@ impl Project {
             file_count,
         })
     }
+
+    pub(crate) fn key(&self) -> &ProjectKey {
+        &self.path
+    }
 }
 
 fn get_file_summary(_config: &Config, path: &Path) -> Result<(std::time::SystemTime, usize)> {
@@ -108,30 +112,9 @@ fn get_file_summary(_config: &Config, path: &Path) -> Result<(std::time::SystemT
     Ok((modified, file_count))
 }
 
-pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
-    let projects_dirs = config
-        .project_dirs
-        .iter()
-        .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()));
-
-    let project_dir_ents: Vec<DirEntry> = projects_dirs
-        .flat_map(|d| d.read_dir().unwrap())
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let projects_iter = project_dir_ents
-        .par_iter()
-        .map(|entry| entry.path())
-        .filter(|p| p.is_dir())
-        .map(|path| Project::from_path(config, path));
-
-    let projects = projects_iter.collect::<Result<Vec<_>>>()?;
-
-    Ok(projects)
-}
-
-struct ProjectLoader {
+pub(crate) struct ProjectLoader {
     rx: tokio::sync::mpsc::Receiver<ProjectEvent>,
-    fetcher: tokio::task::JoinHandle<Result<()>>,
+    _fetcher: tokio::task::JoinHandle<Result<()>>,
 }
 
 impl ProjectLoader {
@@ -140,12 +123,8 @@ impl ProjectLoader {
 
         let fetcher = tokio::spawn(Self::fetcher(config.clone(), tx.clone()).boxed());
 
-        Ok(ProjectLoader { rx, fetcher })
+        Ok(ProjectLoader { rx, _fetcher: fetcher })
     }
-
-    // pub(crate) async fn fetcher2(config: Arc<Config>, tx: tokio::sync::mpsc::Sender<ProjectEvent>) -> Result<()> {
-    //     Ok(())
-    // }
 
     pub(crate) async fn fetcher(
         config: Arc<Config>,
@@ -197,54 +176,23 @@ impl Stream for ProjectLoader {
         let self_mut = self.get_mut();
 
         match self_mut.rx.poll_recv(cx) {
-            Poll::Ready(None) => match self_mut.fetcher.poll_unpin(cx) {
-                Poll::Ready(Err(e)) => Poll::Ready(Some(Err(Report::new(e)))),
-                Poll::Ready(Ok(Ok(()))) => Poll::Ready(None),
-                Poll::Ready(Ok(Err(e))) => Poll::Ready(Some(Err(e))),
-                Poll::Pending => Poll::Pending,
-            },
+            // Poll::Ready(None) => if let Some(fetcher) = self.mut_fetcher {
+            //     match self_mut.fetcher.poll_unpin(cx) {
+            //         Poll::Ready(Err(e)) => Poll::Ready(Some(Err(Report::new(e)))),
+            //         Poll::Ready(Ok(Ok(()))) => {
+            //             Poll::Pending
+            //         },
+            //         Poll::Ready(Ok(Err(e))) => Poll::Ready(Some(Err(e))),
+            //         Poll::Pending => Poll::Pending,
+            //     }
+            // } else {
+            //     Poll::Pending
+            // }
+            Poll::Ready(None) => Poll::Pending,
             Poll::Ready(Some(event)) => Poll::Ready(Some(Ok(event))),
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-pub(crate) async fn load_projects_stream(
-    config: &Config,
-) -> Result<tokio::sync::mpsc::Receiver<ProjectEvent>> {
-    let (tx, rx) = tokio::sync::mpsc::channel(100);
-
-    let projects_dirs = config
-        .project_dirs
-        .iter()
-        .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()));
-
-    let entries_stream = stream::iter(projects_dirs)
-        .then(|d| async {
-            let res: io::Result<_> = Ok(ReadDirStream::new(tokio::fs::read_dir(d).await?));
-            res
-        })
-        .try_flatten()
-        .map_err(eyre::Report::new);
-
-    entries_stream
-        .try_filter_map(|entry| {
-            let path = entry.path();
-            if path.is_dir() {
-                future::ok(Some(path))
-            } else {
-                future::ok(None)
-            }
-        })
-        .try_for_each_concurrent(8, |path| async {
-            let tx = tx.clone();
-            let project = Project::from_path(config, path).context("Failed to read project")?;
-            tx.send(ProjectEvent::Add(project)).await?;
-            Ok(())
-        })
-        .await?;
-
-    Ok(rx)
 }
 
 #[derive(Debug, Deserialize, Default)]
