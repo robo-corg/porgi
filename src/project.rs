@@ -1,10 +1,13 @@
 use std::fs::DirEntry;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
 
 use eyre::Result;
-use eyre::{anyhow, Context};
-use futures::{future, stream, StreamExt, TryStreamExt};
+use eyre::{anyhow, Context, Report};
+use futures::{future, stream, FutureExt, Stream, StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -124,6 +127,91 @@ pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
     let projects = projects_iter.collect::<Result<Vec<_>>>()?;
 
     Ok(projects)
+}
+
+struct ProjectLoader {
+    rx: tokio::sync::mpsc::Receiver<ProjectEvent>,
+    fetcher: tokio::task::JoinHandle<Result<()>>,
+}
+
+impl ProjectLoader {
+    pub(crate) fn new(config: Arc<Config>) -> Result<Self> {
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+        let fetcher = tokio::spawn(
+            Self::fetcher(config.clone(), tx.clone()).boxed()
+        );
+
+        Ok(ProjectLoader {
+            rx,
+            fetcher,
+        })
+    }
+
+    // pub(crate) async fn fetcher2(config: Arc<Config>, tx: tokio::sync::mpsc::Sender<ProjectEvent>) -> Result<()> {
+    //     Ok(())
+    // }
+
+    pub(crate) async fn fetcher(config: Arc<Config>, tx: tokio::sync::mpsc::Sender<ProjectEvent>) -> Result<()> {
+        let projects_dirs = config
+            .project_dirs
+            .iter()
+            .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()));
+
+        let entries_stream = stream::iter(projects_dirs)
+            .then(|d| async {
+                let res: io::Result<_> = Ok(ReadDirStream::new(tokio::fs::read_dir(d).await?));
+                res
+            })
+            .try_flatten()
+            .map_err(eyre::Report::new);
+
+        entries_stream
+            .try_filter_map(|entry| {
+                let path = entry.path();
+                if path.is_dir() {
+                    future::ok(Some(path))
+                } else {
+                    future::ok(None)
+                }
+            })
+            .try_for_each_concurrent(8, |path| async {
+                let tx = tx.clone();
+                let project = Project::from_path(config.as_ref(), path).context("Failed to read project")?;
+                tx.send(ProjectEvent::Add(project)).await?;
+                Ok(())
+            })
+            .await?;
+
+        Ok(())
+    }
+}
+
+impl Stream for ProjectLoader {
+    type Item = Result<ProjectEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut futures::task::Context) -> Poll<Option<Self::Item>> {
+        let self_mut = self.get_mut();
+
+        match self_mut.rx.poll_recv(cx) {
+            Poll::Ready(None) => {
+                match self_mut.fetcher.poll_unpin(cx) {
+                    Poll::Ready(Err(e)) => {
+                        Poll::Ready(Some(Err(Report::new(e))))
+                    },
+                    Poll::Ready(Ok(Ok(()))) => {
+                        Poll::Ready(None)
+                    },
+                    Poll::Ready(Ok(Err(e))) => {
+                        Poll::Ready(Some(Err(e)))
+                    },
+                    Poll::Pending => Poll::Pending,
+                }
+            },
+            Poll::Ready(Some(event)) => Poll::Ready(Some(Ok(event))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 pub(crate) async fn load_projects_stream(
