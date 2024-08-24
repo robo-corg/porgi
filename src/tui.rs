@@ -1,6 +1,6 @@
 use color_eyre::config::HookBuilder;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, EventStream},
+    event::{self, Event, EventStream, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };

@@ -138,21 +138,19 @@ impl ProjectLoader {
     pub(crate) fn new(config: Arc<Config>) -> Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
-        let fetcher = tokio::spawn(
-            Self::fetcher(config.clone(), tx.clone()).boxed()
-        );
+        let fetcher = tokio::spawn(Self::fetcher(config.clone(), tx.clone()).boxed());
 
-        Ok(ProjectLoader {
-            rx,
-            fetcher,
-        })
+        Ok(ProjectLoader { rx, fetcher })
     }
 
     // pub(crate) async fn fetcher2(config: Arc<Config>, tx: tokio::sync::mpsc::Sender<ProjectEvent>) -> Result<()> {
     //     Ok(())
     // }
 
-    pub(crate) async fn fetcher(config: Arc<Config>, tx: tokio::sync::mpsc::Sender<ProjectEvent>) -> Result<()> {
+    pub(crate) async fn fetcher(
+        config: Arc<Config>,
+        tx: tokio::sync::mpsc::Sender<ProjectEvent>,
+    ) -> Result<()> {
         let projects_dirs = config
             .project_dirs
             .iter()
@@ -177,7 +175,8 @@ impl ProjectLoader {
             })
             .try_for_each_concurrent(8, |path| async {
                 let tx = tx.clone();
-                let project = Project::from_path(config.as_ref(), path).context("Failed to read project")?;
+                let project =
+                    Project::from_path(config.as_ref(), path).context("Failed to read project")?;
                 tx.send(ProjectEvent::Add(project)).await?;
                 Ok(())
             })
@@ -190,23 +189,18 @@ impl ProjectLoader {
 impl Stream for ProjectLoader {
     type Item = Result<ProjectEvent>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut futures::task::Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut futures::task::Context,
+    ) -> Poll<Option<Self::Item>> {
         let self_mut = self.get_mut();
 
         match self_mut.rx.poll_recv(cx) {
-            Poll::Ready(None) => {
-                match self_mut.fetcher.poll_unpin(cx) {
-                    Poll::Ready(Err(e)) => {
-                        Poll::Ready(Some(Err(Report::new(e))))
-                    },
-                    Poll::Ready(Ok(Ok(()))) => {
-                        Poll::Ready(None)
-                    },
-                    Poll::Ready(Ok(Err(e))) => {
-                        Poll::Ready(Some(Err(e)))
-                    },
-                    Poll::Pending => Poll::Pending,
-                }
+            Poll::Ready(None) => match self_mut.fetcher.poll_unpin(cx) {
+                Poll::Ready(Err(e)) => Poll::Ready(Some(Err(Report::new(e)))),
+                Poll::Ready(Ok(Ok(()))) => Poll::Ready(None),
+                Poll::Ready(Ok(Err(e))) => Poll::Ready(Some(Err(e))),
+                Poll::Pending => Poll::Pending,
             },
             Poll::Ready(Some(event)) => Poll::Ready(Some(Ok(event))),
             Poll::Pending => Poll::Pending,
