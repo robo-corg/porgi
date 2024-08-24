@@ -151,12 +151,13 @@ impl ProjectLoader {
         config: Arc<Config>,
         tx: tokio::sync::mpsc::Sender<ProjectEvent>,
     ) -> Result<()> {
-        let projects_dirs = config
+        let project_dirs: Vec<PathBuf> = config
             .project_dirs
             .iter()
-            .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()));
+            .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()))
+            .collect();
 
-        let entries_stream = stream::iter(projects_dirs)
+        let entries_stream = stream::iter(project_dirs.into_iter())
             .then(|d| async {
                 let res: io::Result<_> = Ok(ReadDirStream::new(tokio::fs::read_dir(d).await?));
                 res
