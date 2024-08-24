@@ -137,6 +137,7 @@ impl App {
                                     }
                                 }
                             }
+                            self.items.sort();
                         }
                         Some(Err(e)) => {
                             bail!(e);
@@ -329,6 +330,11 @@ impl StatefulList {
             items: Vec::new(),
             last_selected: None,
         }
+    }
+
+    fn sort(&mut self) {
+        self.items.sort_by(|a, b| a.name.cmp(&b.name));
+        self.items.sort_by(|a, b| b.modified.cmp(&a.modified));
     }
 
     fn next(&mut self) {
