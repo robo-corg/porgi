@@ -15,7 +15,8 @@ use crate::{
     tui::{init_error_hooks, init_terminal, restore_terminal, App},
 };
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let config = Config::load()?;
 
     if config.project_dirs.is_empty() {
@@ -32,7 +33,7 @@ fn main() -> Result<()> {
     let terminal = init_terminal()?;
 
     // create app and run it
-    App::new(Arc::new(config), projects).run(terminal)?;
+    App::new(Arc::new(config), projects).run(terminal).await?;
 
     restore_terminal()?;
 

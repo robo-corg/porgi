@@ -1,9 +1,10 @@
 use color_eyre::config::HookBuilder;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, EventStream},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use futures::{future::FutureExt, select, StreamExt};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
 
 const INFO_TEXT: &str =
@@ -110,30 +111,47 @@ impl App {
 }
 
 impl App {
-    pub(crate) fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+    pub(crate) async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+        let mut reader = EventStream::new();
+
         loop {
             self.draw(&mut terminal)?;
 
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    use KeyCode::*;
-                    match key.code {
-                        Esc => return Ok(()),
-                        Left => self.items.unselect(),
-                        Down => self.items.next(),
-                        Up => self.items.previous(),
-                        KeyCode::Char('o') => self.open_project(),
-                        // KeyCode::Char(ch) => {
-                        //     self.search.push(ch);
-                        // }
-                        // Backspace => {
-                        //     self.search.pop();
-                        // }
-                        _ => {}
+            let mut event = reader.next().fuse();
+
+            select! {
+                maybe_event = event => {
+                    match maybe_event {
+                        Some(Ok(Event::Key(key))) => {
+                            if key.kind == KeyEventKind::Press {
+                                use KeyCode::*;
+                                match key.code {
+                                    Esc => return Ok(()),
+                                    Left => self.items.unselect(),
+                                    Down => self.items.next(),
+                                    Up => self.items.previous(),
+                                    KeyCode::Char('o') => self.open_project(),
+                                    // KeyCode::Char(ch) => {
+                                    //     self.search.push(ch);
+                                    // }
+                                    // Backspace => {
+                                    //     self.search.pop();
+                                    // }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(e)) => {
+                            eprintln!("Error: {}", e);
+                        }
+                        None => break,
                     }
                 }
-            }
+            };
         }
+
+        Ok(())
     }
 
     fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> io::Result<()> {

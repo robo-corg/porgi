@@ -1,13 +1,23 @@
 use std::fs::DirEntry;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use eyre::Result;
 use eyre::{anyhow, Context};
+use futures::{future, stream, StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Deserialize;
+use tokio_stream::wrappers::ReadDirStream;
 
 use crate::config::Config;
+
+type ProjectKey = PathBuf;
+
+pub(crate) enum ProjectEvent {
+    Add(Project),
+    Update(ProjectKey, std::time::SystemTime),
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CargoMeta {
@@ -66,7 +76,7 @@ impl Project {
             package,
             readme,
             modified,
-            file_count
+            file_count,
         })
     }
 }
@@ -114,6 +124,44 @@ pub(crate) fn read_projects(config: &Config) -> Result<Vec<Project>> {
     let projects = projects_iter.collect::<Result<Vec<_>>>()?;
 
     Ok(projects)
+}
+
+pub(crate) async fn load_projects_stream(
+    config: &Config,
+) -> Result<tokio::sync::mpsc::Receiver<ProjectEvent>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+    let projects_dirs = config
+        .project_dirs
+        .iter()
+        .map(|p| PathBuf::from(shellexpand::tilde(p).into_owned()));
+
+    let entries_stream = stream::iter(projects_dirs)
+        .then(|d| async {
+            let res: io::Result<_> = Ok(ReadDirStream::new(tokio::fs::read_dir(d).await?));
+            res
+        })
+        .try_flatten()
+        .map_err(eyre::Report::new);
+
+    entries_stream
+        .try_filter_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                future::ok(Some(path))
+            } else {
+                future::ok(None)
+            }
+        })
+        .try_for_each_concurrent(8, |path| async {
+            let tx = tx.clone();
+            let project = Project::from_path(config, path).context("Failed to read project")?;
+            tx.send(ProjectEvent::Add(project)).await?;
+            Ok(())
+        })
+        .await?;
+
+    Ok(rx)
 }
 
 #[derive(Debug, Deserialize, Default)]
