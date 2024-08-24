@@ -6,7 +6,7 @@ mod config;
 mod project;
 mod tui;
 
-use eyre::Result;
+use eyre::{anyhow, Result};
 use std::sync::Arc;
 
 use crate::{
@@ -17,6 +17,10 @@ use crate::{
 
 fn main() -> Result<()> {
     let config = Config::load()?;
+
+    if config.project_dirs.is_empty() {
+        return Err(anyhow!("No project directories configured"));
+    }
 
     let mut projects = read_projects(&config)?;
 
