@@ -1,8 +1,5 @@
-use std::path::Path;
 use std::path::PathBuf;
 
-use color_eyre::config;
-use eyre::anyhow;
 use eyre::Result;
 use serde::Deserialize;
 

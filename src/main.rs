@@ -23,10 +23,7 @@ async fn main() -> Result<()> {
         return Err(anyhow!("No project directories configured"));
     }
 
-    let mut project_events = ProjectLoader::new(config.clone())?;
-
-    // projects.sort_by(|a, b| a.name.cmp(&b.name));
-    // projects.sort_by(|a, b| b.modified.cmp(&a.modified));
+    let project_events = ProjectLoader::new(config.clone())?;
 
     // setup terminal
     init_error_hooks()?;

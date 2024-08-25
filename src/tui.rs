@@ -1,10 +1,10 @@
 use color_eyre::config::HookBuilder;
-use eyre::{bail, Result};
 use crossterm::{
-    event::{self, Event, EventStream, KeyCode, KeyEventKind},
+    event::{Event, EventStream, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use eyre::{bail, Result};
 use futures::{future::FutureExt, select, StreamExt};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
 
@@ -13,11 +13,16 @@ const INFO_TEXT: &str =
 
 use serde::Deserialize;
 use std::{
+    collections::HashMap,
+    hash::Hash,
     io::{self, stdout},
     sync::Arc,
 };
 
-use crate::{config::Config, project::{Project, ProjectEvent, ProjectLoader}};
+use crate::{
+    config::Config,
+    project::{Project, ProjectEvent, ProjectLoader, ProjectStore},
+};
 
 #[derive(Debug, Deserialize)]
 pub struct ColorConfig {
@@ -42,7 +47,7 @@ impl Default for ColorConfig {
 
 struct StatefulList {
     state: ListState,
-    items: Vec<Project>,
+    items: ProjectStore,
     last_selected: Option<usize>,
 }
 
@@ -94,7 +99,7 @@ impl App {
             config,
             search: String::new(),
             items: StatefulList::new(),
-            project_events
+            project_events,
         }
     }
 
@@ -129,12 +134,14 @@ impl App {
                         Some(Ok(event)) => {
                             match event {
                                 ProjectEvent::Add(project) => {
-                                    self.items.items.push(project);
+                                    self.items.items.add(project);
                                 }
                                 ProjectEvent::Update(project_key, last_modified) => {
-                                    if let Some(project) = self.items.items.iter_mut().find(|p| p.key() == &project_key) {
-                                        project.modified = last_modified;
-                                    }
+                                    let project = self.items.items.get_mut(&project_key).unwrap();
+                                    project.modified = last_modified;
+                                    // if let Some(project) = self.items.items.iter_mut().find(|p| p.key() == &project_key) {
+                                    //     project.modified = last_modified;
+                                    // }
                                 }
                             }
                             self.items.sort();
@@ -327,14 +334,13 @@ impl StatefulList {
     fn new() -> Self {
         StatefulList {
             state: ListState::default(),
-            items: Vec::new(),
+            items: ProjectStore::default(),
             last_selected: None,
         }
     }
 
     fn sort(&mut self) {
-        self.items.sort_by(|a, b| a.name.cmp(&b.name));
-        self.items.sort_by(|a, b| b.modified.cmp(&a.modified));
+        self.items.sort();
     }
 
     fn next(&mut self) {
