@@ -13,8 +13,6 @@ const INFO_TEXT: &str =
 
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
-    hash::Hash,
     io::{self, stdout},
     sync::Arc,
 };

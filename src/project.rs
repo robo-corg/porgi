@@ -13,6 +13,7 @@ use ignore::WalkBuilder;
 use serde::Deserialize;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::wrappers::{ReadDirStream, ReceiverStream};
+use which::which;
 
 use crate::config::Config;
 
@@ -281,7 +282,7 @@ impl ProjectOpener {
     pub(crate) fn open(&self, project: &Project) -> Result<()> {
         match self {
             ProjectOpener::Auto => {
-                if std::env::var("CODE").is_ok() {
+                if which("code").is_ok() {
                     Self::open_code(project)
                 } else if std::env::var("EDITOR").is_ok() {
                     Self::open_editor(project)
