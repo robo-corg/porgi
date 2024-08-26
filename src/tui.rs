@@ -57,7 +57,6 @@ struct StatefulList {
 /// Check the drawing logic for items on how to specify the highlighting style for selected items.
 pub(crate) struct App {
     config: Arc<Config>,
-    search: String,
     items: StatefulList,
     project_events: ProjectLoader,
 }
@@ -95,7 +94,6 @@ impl App {
     pub(crate) fn new(config: Arc<Config>, project_events: ProjectLoader) -> Self {
         Self {
             config,
-            search: String::new(),
             items: StatefulList::new(),
             project_events,
         }
@@ -109,10 +107,12 @@ impl App {
         self.items.state.select(Some(self.items.items.len() - 1));
     }
 
-    fn open_project(&mut self) {
+    async fn open_project(&mut self) -> Result<()> {
         if let Some(project) = self.items.current() {
-            self.config.opener.open(project).unwrap();
+            self.config.opener.open(project).await?;
         }
+
+        Ok(())
     }
 }
 
@@ -134,12 +134,10 @@ impl App {
                                 ProjectEvent::Add(project) => {
                                     self.items.items.add(project);
                                 }
-                                ProjectEvent::Update(project_key, last_modified) => {
+                                ProjectEvent::Update(project_key, last_modified, file_count) => {
                                     let project = self.items.items.get_mut(&project_key).unwrap();
                                     project.modified = last_modified;
-                                    // if let Some(project) = self.items.items.iter_mut().find(|p| p.key() == &project_key) {
-                                    //     project.modified = last_modified;
-                                    // }
+                                    project.file_count = file_count;
                                 }
                             }
                             self.items.sort();
@@ -157,16 +155,19 @@ impl App {
                                 use KeyCode::*;
                                 match key.code {
                                     Esc => return Ok(()),
-                                    Left => self.items.unselect(),
-                                    Down => self.items.next(),
-                                    Up => self.items.previous(),
-                                    KeyCode::Char('o') => self.open_project(),
-                                    // KeyCode::Char(ch) => {
-                                    //     self.search.push(ch);
-                                    // }
-                                    // Backspace => {
-                                    //     self.search.pop();
-                                    // }
+                                    KeyCode::Char('h') | Left => self.items.unselect(),
+                                    KeyCode::Char('j') |  Down => self.items.next(),
+                                    KeyCode::Char('k') | Up => self.items.previous(),
+                                    KeyCode::Char('g') | KeyCode::Home => self.go_top(),
+                                    KeyCode::Char('G') | KeyCode::End => self.go_bottom(),
+                                    KeyCode::Char('o') => {
+                                        // So far it seem sufficient to clear and force a redraw
+                                        // but we may want to restore the terminal first before
+                                        // launching an editor that runs in the terminal.
+                                        self.open_project().await?;
+                                        terminal.clear()?;
+                                        self.draw(&mut terminal)?;
+                                    },
                                     _ => {}
                                 }
                             }

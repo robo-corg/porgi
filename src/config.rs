@@ -16,7 +16,7 @@ pub struct Config {
     pub opener: ProjectOpener,
 }
 
-fn must_exist<'a>(p: &'a PathBuf) -> Option<&'a PathBuf> {
+fn must_exist(p: &PathBuf) -> Option<&PathBuf> {
     if p.exists() {
         Some(p)
     } else {
@@ -34,10 +34,7 @@ impl Config {
         if config_dir == config_in_homedir {
             config_dir.into_iter().collect()
         } else {
-            config_dir
-                .into_iter()
-                .chain(config_in_homedir.into_iter())
-                .collect()
+            config_dir.into_iter().chain(config_in_homedir).collect()
         }
     }
 

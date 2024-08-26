@@ -6,11 +6,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 
-use eyre::Result;
 use eyre::{anyhow, Context};
+use eyre::{OptionExt, Result};
 use futures::{future, stream, FutureExt, Stream, StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
 use serde::Deserialize;
+use tokio::process;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::wrappers::{ReadDirStream, ReceiverStream};
 use which::which;
@@ -21,32 +22,8 @@ pub(crate) type ProjectKey = PathBuf;
 
 pub(crate) enum ProjectEvent {
     Add(Project),
-    Update(ProjectKey, std::time::SystemTime),
+    Update(ProjectKey, std::time::SystemTime, usize),
 }
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct CargoMeta {
-    name: String,
-    version: String,
-    authors: Vec<String>,
-    description: Option<String>,
-    license: Option<String>,
-    repository: Option<String>,
-    dependencies: Vec<String>,
-    dev_dependencies: Vec<String>,
-}
-
-#[derive(Debug)]
-pub(crate) enum PackageMeta {
-    Cargo(CargoMeta),
-}
-
-// pub(crate) struct ProjectDirInfo {
-//     pub(crate) parent: Option<usize>,
-//     pub(crate) modified: std::time::SystemTime,
-//     pub(crate) immediate_child_count: usize,
-//     pub(crate) total_child_count: usize,
-// }
 
 #[derive(Debug, Default)]
 pub(crate) struct ProjectStore {
@@ -102,8 +79,6 @@ impl Index<usize> for ProjectStore {
 pub(crate) struct Project {
     pub(crate) name: String,
     pub(crate) path: PathBuf,
-    pub(crate) git: bool,
-    pub(crate) package: Vec<PackageMeta>,
     pub(crate) readme: Option<String>,
     pub(crate) modified: std::time::SystemTime,
     pub(crate) file_count: usize,
@@ -111,9 +86,11 @@ pub(crate) struct Project {
 
 impl Project {
     pub fn from_path(_config: &Config, path: PathBuf) -> Result<Self> {
-        let git = path.join(".git").exists();
-        let package = Vec::new();
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .ok_or_eyre("Project path does not have a name")?
+            .to_string_lossy()
+            .to_string();
 
         let readme_path = path.join("README.md");
         let readme = if readme_path.exists() {
@@ -127,8 +104,6 @@ impl Project {
         Ok(Project {
             name,
             path,
-            git,
-            package,
             readme,
             modified,
             file_count,
@@ -182,18 +157,18 @@ impl ProjectLoader {
 
         let walker = tokio::spawn(async move {
             walker_rx_stream
-                .map::<Result<PathBuf>, _>(|p| Ok(p))
+                .map::<Result<PathBuf>, _>(Ok)
                 .try_for_each_concurrent(8, move |path| {
                     let config = config.clone();
                     let tx = tx.clone();
                     async move {
                         let summary_path = path.clone();
-                        let (modified, _file_count) = tokio::task::spawn_blocking(move || {
+                        let (modified, file_count) = tokio::task::spawn_blocking(move || {
                             get_file_summary(config.as_ref(), &summary_path)
                         })
                         .await??;
 
-                        tx.send(ProjectEvent::Update(path.to_owned(), modified))
+                        tx.send(ProjectEvent::Update(path.to_owned(), modified, file_count))
                             .await?;
                         Ok(())
                     }
@@ -270,62 +245,98 @@ impl Stream for ProjectLoader {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum AddPathToArgs {
+    #[default]
+    Auto,
+    Last,
+    Never,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Command {
+    args: Vec<String>,
+    #[serde(default = "ProjectOpener::chdir_default")]
+    chdir: bool,
+    #[serde(default)]
+    add_path_to_args: AddPathToArgs,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectOpener {
     #[default]
     Auto,
     Code,
     Editor,
-    Command(Vec<String>),
+    Command(Command),
 }
 
 impl ProjectOpener {
-    pub(crate) fn open(&self, project: &Project) -> Result<()> {
+    fn chdir_default() -> bool {
+        true
+    }
+
+    pub(crate) async fn open(&self, project: &Project) -> Result<()> {
         match self {
             ProjectOpener::Auto => {
                 if which("code").is_ok() {
-                    Self::open_code(project)
+                    Self::open_code(project).await
                 } else if std::env::var("EDITOR").is_ok() {
-                    Self::open_editor(project)
+                    Self::open_editor(project).await
                 } else {
                     Err(anyhow!("vscode not found nor was an editor set"))
                 }
             }
-            ProjectOpener::Code => Self::open_code(project),
-            ProjectOpener::Editor => Self::open_editor(project),
-            ProjectOpener::Command(cmd) => Self::open_command(project, cmd),
+            ProjectOpener::Code => Self::open_code(project).await,
+            ProjectOpener::Editor => Self::open_editor(project).await,
+            ProjectOpener::Command(cmd) => Self::open_command(project, cmd).await,
         }
     }
 
-    pub(crate) fn open_code(project: &Project) -> Result<()> {
-        let mut child = std::process::Command::new("code")
-            .arg(&project.path)
-            .spawn()?;
+    pub(crate) async fn open_code(project: &Project) -> Result<()> {
+        let mut child = process::Command::new("code").arg(&project.path).spawn()?;
 
-        child.wait()?;
+        child.wait().await?;
 
         Ok(())
     }
 
-    pub(crate) fn open_editor(project: &Project) -> Result<()> {
+    pub(crate) async fn open_editor(project: &Project) -> Result<()> {
         let editor =
             std::env::var("EDITOR").wrap_err("Could not read EDITOR environment variable")?;
 
-        let mut child = std::process::Command::new(&editor)
+        let mut child = process::Command::new(&editor)
+            .current_dir(&project.path)
             .arg(&project.path)
             .spawn()?;
 
-        child.wait()?;
+        child.wait().await?;
 
         Ok(())
     }
 
-    pub(crate) fn open_command(project: &Project, cmd: &[String]) -> Result<()> {
-        let mut child = std::process::Command::new(&cmd[0])
-            .args(&cmd[1..])
-            .arg(&project.path)
-            .spawn()?;
+    pub(crate) async fn open_command(project: &Project, cmd: &Command) -> Result<()> {
+        let mut proc: process::Command = process::Command::new(&cmd.args[0]);
 
-        child.wait()?;
+        proc.args(&cmd.args[1..]);
+
+        match cmd.add_path_to_args {
+            AddPathToArgs::Auto => {
+                proc.arg(&project.path);
+            }
+            AddPathToArgs::Last => {
+                proc.arg(&project.path);
+            }
+            AddPathToArgs::Never => {}
+        }
+
+        if cmd.chdir {
+            proc.current_dir(&project.path);
+        }
+
+        let mut child = proc.spawn()?;
+
+        child.wait().await?;
 
         Ok(())
     }

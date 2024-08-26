@@ -3,8 +3,11 @@ name = "porgi"
 version = "0.1.0"
 edition = "2021"
 
-description = "A simple cli TUI for finding and organizing your code projects"
+description = "A simple cli TUI for finding and organizing code projects"
+authors = ["Andrew McHarg <amcharg@gmail.com>"]
 
+rust-version = "1.80"
+repository = "https://github.com/robo-corg/porgi"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,7 +24,7 @@ ignore = "0.4.22"
 ratatui = { version = "0.26.2", features = ["serde"] }
 serde = { version = "1.0.200", features = ["derive"] }
 shellexpand = "3.1.0"
-tokio = { version = "1.39.3", features = ["fs", "macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { version = "1.39.3", features = ["fs", "macros", "process", "rt", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1.15", features = ["fs"] }
 toml = "0.8.12"
 which = "6.0.3"
