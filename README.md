@@ -32,7 +32,7 @@ opener = "auto"
 
 - [x] Multiple project directories
 - [x] Sort projects by most recent changes
-- [ ] Open in editor (WIP)
+- [x] Open in editor
 - [ ] New user onboarding (TBD if this will be in TUI)
 - [ ] Preview of file tree
 - [ ] Stats for project such as file count, lines of code etc...
