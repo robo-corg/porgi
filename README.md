@@ -8,6 +8,16 @@ Probably don't use this yet since its very much a WIP.
 
 If you are like me you probably have some directory on computer brimming with hopes, dreams, and build files called "projects". If you often find yourself scratching your head and forgetting where put that very important weird cli tool that you now can't live with out (perhaps because you name everything corgi) this tool is for you.
 
+## Installation
+
+You will need to have rust and cargo installed. https://rustup.rs/ will install this.
+
+Once you have cargo installed you can install:
+
+```
+cargo install porgi
+```
+
 ## Configuring your porgi
 
 *Porgi require a config file to run for now*
