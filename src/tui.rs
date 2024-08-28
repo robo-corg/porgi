@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use color_eyre::config::HookBuilder;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
@@ -5,6 +6,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use eyre::{bail, Result};
+use fancy_duration::FancyDuration;
 use futures::{future::FutureExt, select, StreamExt};
 use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
 
@@ -15,6 +17,7 @@ use serde::Deserialize;
 use std::{
     io::{self, stdout},
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
@@ -291,31 +294,61 @@ impl App {
         //     .highlight_symbol(">")
         //     .highlight_spacing(HighlightSpacing::Always);
 
-        let rows = [Row::new(vec!["Cell1", "Cell2", "Cell3"])];
+        let rows: Vec<Row> = self
+            .items
+            .items
+            .iter()
+            .map(|project| {
+                Row::new(vec![
+                    project.name.clone(),
+                    if let Ok(modified_dur) = project.modified.elapsed() {
+                        if modified_dur < Duration::new(60, 0) {
+                            "just now".to_string()
+                        } else if modified_dur > Duration::new(48 * 60 * 60, 0) {
+                            let date: DateTime<Local> = project.modified.into();
+
+                            date.format("%Y-%m-%d").to_string()
+                        } else {
+                            format!(
+                                "{} ago",
+                                FancyDuration::new(modified_dur).filter(&[
+                                    fancy_duration::DurationPart::Days,
+                                    fancy_duration::DurationPart::Hours,
+                                    fancy_duration::DurationPart::Minutes,
+                                ])
+                            )
+                        }
+                    } else {
+                        "the future 🧙".to_string()
+                    },
+                ])
+            })
+            .collect();
+
+        //let rows = [Row::new(vec!["Cell1", "Cell2"])];
         // Columns widths are constrained in the same way as Layout...
-        let widths = [
-            Constraint::Length(5),
-            Constraint::Length(10),
-        ];
+        let widths = [Constraint::Fill(1), Constraint::Length(14)];
 
         let table = Table::new(rows, widths)
-        // ...and they can be separated by a fixed spacing.
-        .column_spacing(1)
-        // You can set the style of the entire Table.
-        .style(Style::new().blue())
-        // It has an optional header, which is simply a Row always visible at the top.
-        // It has an optional footer, which is simply a Row always visible at the bottom.
-        .footer(Row::new(vec!["Updated on Dec 28"]))
-        .block(inner_block)
-        // The selected row and its content can also be styled.
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::REVERSED)
-                .fg(self.config.colors.selected_style_fg),
-        )
-        // ...and potentially show a symbol in front of the selection.
-        .highlight_symbol(">>");
+            // ...and they can be separated by a fixed spacing.
+            .column_spacing(1)
+            // You can set the style of the entire Table.
+            .style(Style::new().blue())
+            // It has an optional header, which is simply a Row always visible at the top.
+            // It has an optional footer, which is simply a Row always visible at the bottom.
+            //.footer(Row::new(vec!["Updated on Dec 28"]))
+            // .footer(
+            // )
+            .block(inner_block)
+            // The selected row and its content can also be styled.
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED)
+                    .fg(self.config.colors.selected_style_fg),
+            )
+            // ...and potentially show a symbol in front of the selection.
+            .highlight_symbol(">");
 
         // We can now render the item list
         // (look careful we are using StatefulWidget's render.)
