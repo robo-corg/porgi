@@ -19,7 +19,7 @@ color-eyre = "0.6.3"
 crossterm = { version = "0.27.0", features = ["event-stream"] }
 dirs = "5.0.1"
 eyre = "0.6.12"
-fancy-duration = "0.9.2"
+fancy-duration = { version = "0.9.2", features = ["chrono"] }
 futures = "0.3.30"
 git2 = "0.18.3"
 ignore = "0.4.22"

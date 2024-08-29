@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeDelta};
 use color_eyre::config::HookBuilder;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
@@ -17,7 +17,6 @@ use serde::Deserialize;
 use std::{
     io::{self, stdout},
     sync::Arc,
-    time::Duration,
 };
 
 use crate::{
@@ -299,35 +298,42 @@ impl App {
             .items
             .iter()
             .map(|project| {
-                Row::new(vec![
-                    project.name.clone(),
-                    if let Ok(modified_dur) = project.modified.elapsed() {
-                        if modified_dur < Duration::new(60, 0) {
-                            "just now".to_string()
-                        } else if modified_dur > Duration::new(48 * 60 * 60, 0) {
-                            let date: DateTime<Local> = project.modified.into();
+                Row::new(vec![project.name.clone(), {
+                    let now: DateTime<Local> = Local::now();
+                    let date: DateTime<Local> = project.modified.into();
+                    let d = now.signed_duration_since(date);
 
-                            date.format("%Y-%m-%d").to_string()
-                        } else {
-                            format!(
-                                "{} ago",
-                                FancyDuration::new(modified_dur).filter(&[
-                                    fancy_duration::DurationPart::Days,
-                                    fancy_duration::DurationPart::Hours,
-                                    fancy_duration::DurationPart::Minutes,
-                                ])
-                            )
-                        }
+                    if d.abs() < TimeDelta::new(60, 0).unwrap() {
+                        "just now".to_string()
+                    } else if d.abs() > TimeDelta::new(48 * 60 * 60, 0).unwrap() {
+                        let date: DateTime<Local> = project.modified.into();
+                        date.format("%Y-%m-%d").to_string()
+                    } else if d >= TimeDelta::zero() {
+                        format!(
+                            "{} ago",
+                            FancyDuration::new(d).filter(&[
+                                fancy_duration::DurationPart::Days,
+                                fancy_duration::DurationPart::Hours,
+                                fancy_duration::DurationPart::Minutes,
+                            ])
+                        )
                     } else {
-                        "the future 🧙".to_string()
-                    },
-                ])
+                        format!(
+                            "{} from now",
+                            FancyDuration::new(d.abs()).filter(&[
+                                fancy_duration::DurationPart::Days,
+                                fancy_duration::DurationPart::Hours,
+                                fancy_duration::DurationPart::Minutes,
+                            ])
+                        )
+                    }
+                }])
             })
             .collect();
 
         //let rows = [Row::new(vec!["Cell1", "Cell2"])];
         // Columns widths are constrained in the same way as Layout...
-        let widths = [Constraint::Fill(1), Constraint::Length(14)];
+        let widths = [Constraint::Fill(1), Constraint::Length(16)];
 
         let table = Table::new(rows, widths)
             // ...and they can be separated by a fixed spacing.

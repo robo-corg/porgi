@@ -208,6 +208,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
@@ -403,6 +404,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3ae60718ae501dca9d27fd0e322683c86a95a1a01fac1807aa2f9b035cc0882"
 dependencies = [
  "anyhow",
+ "chrono",
  "lazy_static",
  "regex",
 ]
