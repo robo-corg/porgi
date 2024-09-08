@@ -65,6 +65,21 @@ impl ProjectStore {
             .iter()
             .map(move |idx| &self.projects[*idx])
     }
+
+    pub(crate) fn update(&mut self, event: ProjectEvent) -> Result<()> {
+        match event {
+            ProjectEvent::Add(project) => {
+                self.add(project);
+            }
+            ProjectEvent::Update(project_key, last_modified, file_count) => {
+                let project = self.get_mut(&project_key).unwrap();
+                project.modified = last_modified;
+                project.file_count = file_count;
+            }
+        }
+        self.sort();
+        Ok(())
+    }
 }
 
 impl Index<usize> for ProjectStore {
