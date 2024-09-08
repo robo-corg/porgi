@@ -356,3 +356,36 @@ impl ProjectOpener {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_PROJECT_COUNT: usize = 1;
+
+    #[tokio::test]
+    async fn test_project_load() {
+        let config = Arc::new(Config {
+            project_dirs: vec!["tests/test_projects".to_string()],
+            ..Default::default()
+        });
+
+        let mut project_events = ProjectLoader::new(config.clone()).unwrap();
+        let mut project_store = ProjectStore::default();
+
+        let mut project_count = 0;
+
+        while let Some(event) = project_events.next().await.transpose().unwrap() {
+            project_store.update(event).unwrap();
+            project_count += 1;
+
+            if project_count >= TEST_PROJECT_COUNT {
+                break;
+            }
+        }
+
+        assert_eq!(project_store.len(), TEST_PROJECT_COUNT);
+        let project = project_store.projects.first().unwrap();
+        assert_eq!(project.name, "test_project_a");
+    }
+}
